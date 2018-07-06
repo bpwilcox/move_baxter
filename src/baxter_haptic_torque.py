@@ -205,11 +205,22 @@ def main():
         b_end_vel = np.matmul(J_T.T,b_joint_vel)
         delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
 
-        des_acc = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)*0.2
+        des_acc = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
 
         #des_joint_torques = np.matmul(J_T,np.matmul(M_ee,des_acc))
         des_joint_torques = np.matmul(J_T,des_acc)
         print("Delta x: {}\n Delta vel: {}\n".format(delta_pos,delta_vel))
+
+        #Finding the torque for the secondary controller
+        b_q = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
+        K_null = np.diag([0,0,1,0,0,0,0])
+        #This is to keep the E_0 joint at 0deg
+        des_joint_torque_null  = np.matmul(K_null,b_q)
+
+        #Finding the projection operator for the null torque opreration
+        J_T_pinv = np.matmul(kin.cart_inertia(),np.matmul(kin.jacobian(),np.linalg.inv(kin.inertia())))
+        P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
+        T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
 
         #clip the toruqes:
         #tor_lim = 1000
@@ -217,8 +228,8 @@ def main():
         des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
         #des_joint_torques = des_joint_torques-np.matmul(K_v,b_joint_vel)+grv_comp.gravity_torque/100
         #print(des_joint_torques)
-        print("Total Torque: {}".format(des_joint_torques+grv_comp.gravity_torque/100))
-        des_joint_torques = des_joint_torques+grv_comp.gravity_torque/100
+        des_joint_torques = des_joint_torques+grv_comp.gravity_torque/100 + T_null
+        print("Total Torque: {}".format(des_joint_torques))
 
         #des_joint_torques = np.zeros(7)#+grv_comp.gravity_torque/100
         #print("Rotation Matrix {} \n Orientation {} joint torques {}".format(delta_R,delta_theta.T,des_joint_torques.T))
@@ -227,8 +238,7 @@ def main():
         log_joint_torque.append(des_joint_torques)
         limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
         limb.set_joint_torques(limb_torques)
-        old_des_R = des_R
-        old_des_x = des_x
+
         #print(limb_torques)
         #rospy.spin()
         rate.sleep()
