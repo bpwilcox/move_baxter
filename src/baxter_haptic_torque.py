@@ -87,7 +87,8 @@ def caltorque():
     delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
     delta_x = np.asarray(des_x-b_x).reshape((3,1))
     delta_pos = np.concatenate((delta_x,delta_theta))
-    
+    des_joint_torques = np.matmul(J_T,des_force)
+
     delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
     des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
     
@@ -99,6 +100,9 @@ def caltorque():
     J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
     P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
     T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))    
+    
+    return des_joint_torques+T_null
+    
    
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
