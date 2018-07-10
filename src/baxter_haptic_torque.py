@@ -98,12 +98,7 @@ def caltorque(des_x,des_R,b_q,b_q_v, b_x, des_vel, B_end_vel):
     #J_T_pinv = np.matmul(kin.cart_inertia(),np.matmul(kin.jacobian(),np.linalg.inv(kin.inertia())))
     J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
     P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
-    T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
-
-    
-    
-
-    
+    T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))    
    
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
