@@ -27,6 +27,7 @@ from std_msgs.msg import (
 
 
 from baxter_core_msgs.msg import SEAJointState
+from visualization_msgs.msg import Marker
 
 from baxter_interface import CHECK_VERSION
 
@@ -77,6 +78,17 @@ def scale_x(x):
     #scale_mat = np.eye(3)
     return np.matmul(scale_mat,x)
 
+def caltorque():
+    return 0  
+
+def joint_limit_test(b_joint_angles):
+    #A function to test the joint limit of the system
+    eps = 0.01
+    joint_max = np.asarray([1.7016,1.047,3.0541,2.618,3.059,2.094,3.059]) - eps
+    joint_min = np.asarray([-1.7016,-2.147,-3.0541,-0.05,-3.059,-1.5707,-3.059]) +eps
+    if(any(b_joint_angles<joint_min) or any(b_joint_angles>joint_max)):
+        print('Joint limit reached')
+
 def main():
     log_x_des = []
     log_x_b = []
@@ -84,6 +96,11 @@ def main():
     log_joint_torque = []
     log_delta_theta = []
     rospy.init_node('Control_baxter')
+
+    #Creating the Publisher for rviz visualization
+    rviz_pub = rospy.Publisher('hd_point',PoseStamped,queue_size=10)
+    hdr = Header(stamp=rospy.Time.now(), frame_id='/world')
+
     #Initalize Subscriber for the Haptic device
     phantom = haptic_pos()
     rospy.Subscriber('pose_msg',Float32MultiArray,phantom.callback,queue_size= 10)
@@ -116,9 +133,10 @@ def main():
         rs.disable()
     x = 0
     #K = 100
-    K = np.diag([30,30,30,1,1,1])
+    K = np.diag([30,30,30,1,1,1])*0.5
     #K_v = np.diag([1,1,1,1,1,1,1])*10
     K_v = np.diag([1,1,1,1,1,1])
+    #K_v = 2*np.sqrt(K)
 
     alpha = 1
     rospy.on_shutdown(reset_baxter)
@@ -132,14 +150,12 @@ def main():
     hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
     x_off = b_x - hd_x*alpha
     while not rospy.is_shutdown():
-        J_T = kin.jacobian(pos=[0,0,0]).T
         M_ee = kin.cart_inertia()
         #print(J_T)
         joint_angles = limb.joint_angles()
 
         #Get posd_t from haptic device
         hd_ori = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
-        des_ori = np.matmul(hd_ori,R_off)
         hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
         #print(hd_x)
         #Baxter's orientation
@@ -160,6 +176,7 @@ def main():
         else:
             print("Button 1 Pressed")
             while phantom.hd_button1:
+                J_T = kin.jacobian(pos=[0,0,0]).T
                 b_q = limb.endpoint_pose()['orientation']
                 b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
                 b_tranform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
@@ -189,7 +206,14 @@ def main():
             x_off = b_x - hd_x*alpha
             R_off = R_offset(hd_transform_0,b_transform_0)
 
-        delta_R = np.matmul(b_tranform.T,des_ori)
+        des_ori = mat2quat(des_R)
+        pos = Point(des_x[0],des_x[1],des_x[2])
+        ori = Quaternion(w = des_ori[0], x = des_ori[1], y = des_ori[2], z = des_ori[3])
+        pose= PoseStamped(header=hdr,pose=Pose(position= pos,orientation= ori))
+        rviz_pub.publish(pose)
+
+        J_T = kin.jacobian(pos=[0,0,0]).T
+        delta_R = np.matmul(b_tranform.T,des_R)
         delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
         log_delta_theta.append(delta_theta)
         delta_x = np.asarray(des_x-b_x).reshape((3,1))
@@ -205,20 +229,24 @@ def main():
         b_end_vel = np.matmul(J_T.T,b_joint_vel)
         delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
 
-        des_acc = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
+        des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
 
         #des_joint_torques = np.matmul(J_T,np.matmul(M_ee,des_acc))
-        des_joint_torques = np.matmul(J_T,des_acc)
-        print("Delta x: {}\n Delta vel: {}\n".format(delta_pos,delta_vel))
+        des_joint_torques = np.matmul(J_T,des_force)
+        #des_joint_torques = np.matmul(kin.inertia(),des_joint_torques)
+        #print("Delta x: {}\n Delta vel: {}\n".format(delta_pos,delta_vel))
 
         #Finding the torque for the secondary controller
         b_q = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
-        K_null = np.diag([0,0,1,0,0,0,0])
+        K_null = np.diag([0,0,1,0,0,0,0])*10
+        K_V_null = np.diag([0,0,1,0,0,0,0])
+        des_joint_angles = np.asarray([0,0,0,0,0,0,0])
         #This is to keep the E_0 joint at 0deg
-        des_joint_torque_null  = np.matmul(K_null,b_q)
+        des_joint_torque_null  = np.matmul(K_null,des_joint_angles-b_q) + np.matmul(K_V_null,-b_joint_vel)
 
         #Finding the projection operator for the null torque opreration
-        J_T_pinv = np.matmul(kin.cart_inertia(),np.matmul(kin.jacobian(),np.linalg.inv(kin.inertia())))
+        #J_T_pinv = np.matmul(kin.cart_inertia(),np.matmul(kin.jacobian(),np.linalg.inv(kin.inertia())))
+        J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
         P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
         T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
 
@@ -229,7 +257,7 @@ def main():
         #des_joint_torques = des_joint_torques-np.matmul(K_v,b_joint_vel)+grv_comp.gravity_torque/100
         #print(des_joint_torques)
         des_joint_torques = des_joint_torques+grv_comp.gravity_torque/100 + T_null
-        print("Total Torque: {}".format(des_joint_torques))
+        #print("Total Torque: {}".format(des_joint_torques))
 
         #des_joint_torques = np.zeros(7)#+grv_comp.gravity_torque/100
         #print("Rotation Matrix {} \n Orientation {} joint torques {}".format(delta_R,delta_theta.T,des_joint_torques.T))
@@ -238,7 +266,9 @@ def main():
         log_joint_torque.append(des_joint_torques)
         limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
         limb.set_joint_torques(limb_torques)
-
+        b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
+        print("Joint angles {}".format(b_joint_angles))
+        joint_limit_test(b_joint_angles)
         #print(limb_torques)
         #rospy.spin()
         rate.sleep()
