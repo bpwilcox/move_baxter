@@ -80,13 +80,6 @@ def scale_x(x):
 
 def caltorque():
     K = np.diag([30,30,30,1,1,1])*0.5
-<<<<<<< HEAD
-    K_v =  np.diag([1,1,1,1,1,1])
-    K_null =
-    K_null_v =
-    return 0
-
-=======
     K_v = np.diag([1,1,1,1,1,1])
     K_null = np.diag([0,0,1,0,0,0,0])*10
     K_v_null = np.diag([0,0,1,0,0,0,0])
@@ -107,7 +100,6 @@ def caltorque():
     P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
     T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))    
    
->>>>>>> refs/remotes/origin/develop
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
     eps = 0.01
