@@ -78,6 +78,7 @@ def scale_x(x):
     #scale_mat = np.eye(3)
     return np.matmul(scale_mat,x)
 
+<<<<<<< HEAD
 def caltorque():
     K = np.diag([30,30,30,1,1,1])*0.5
     K_v =  np.diag([1,1,1,1,1,1])
@@ -85,6 +86,35 @@ def caltorque():
     K_null_v =
     return 0
 
+=======
+def caltorque(des_x,des_R,b_q,b_q_v, b_x, des_vel, B_end_vel):
+    K = np.diag([30,30,30,1,1,1])*0.5
+    K_v = np.diag([1,1,1,1,1,1])
+    K_null = np.diag([0,0,1,0,0,0,0])*10
+    K_v_null = np.diag([0,0,1,0,0,0,0])
+    delta_R = np.matmul(b_tranform.T,des_R)
+    delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
+    delta_x = np.asarray(des_x-b_x).reshape((3,1))
+    delta_pos = np.concatenate((delta_x,delta_theta))
+    
+    delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
+    des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
+    
+    des_joint_angles = np.asarray([0,0,0,0,0,0,0])
+    des_joint_torque_null  = np.matmul(K_null,des_joint_angles-b_q) + np.matmul(K_V_null,-b_joint_vel)
+
+    #Finding the projection operator for the null torque opreration
+    #J_T_pinv = np.matmul(kin.cart_inertia(),np.matmul(kin.jacobian(),np.linalg.inv(kin.inertia())))
+    J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
+    P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
+    T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
+
+    
+    
+
+    
+   
+>>>>>>> 979297e3ffb3c17f602618fb2aa18d6e03508228
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
     eps = 0.01
@@ -207,12 +237,17 @@ def main():
         rviz_pub.publish(pose)
 
         J_T = kin.jacobian(pos=[0,0,0]).T
+<<<<<<< HEAD
         des_joint_torques = caltorque(J_T,des_x,des_R,)
+=======
+        
+>>>>>>> 979297e3ffb3c17f602618fb2aa18d6e03508228
         delta_R = np.matmul(b_tranform.T,des_R)
         delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
         log_delta_theta.append(delta_theta)
         delta_x = np.asarray(des_x-b_x).reshape((3,1))
         delta_pos = np.concatenate((delta_x,delta_theta))
+        
         #delta_pos = np.concatenate((alpha*hd_vel,np.zeros((3,1))))
 
         #Finding the velocity error
