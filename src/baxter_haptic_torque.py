@@ -79,7 +79,11 @@ def scale_x(x):
     return np.matmul(scale_mat,x)
 
 def caltorque():
-    return 0  
+    K = np.diag([30,30,30,1,1,1])*0.5
+    K_v =  np.diag([1,1,1,1,1,1])
+    K_null =
+    K_null_v =
+    return 0
 
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
@@ -132,13 +136,7 @@ def main():
         limb.move_to_neutral()
         rs.disable()
     x = 0
-    #K = 100
-    K = np.diag([30,30,30,1,1,1])*0.5
-    #K_v = np.diag([1,1,1,1,1,1,1])*10
-    K_v = np.diag([1,1,1,1,1,1])
-    #K_v = 2*np.sqrt(K)
 
-    alpha = 1
     rospy.on_shutdown(reset_baxter)
 
     hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
@@ -150,25 +148,21 @@ def main():
     hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
     x_off = b_x - hd_x*alpha
     while not rospy.is_shutdown():
-        M_ee = kin.cart_inertia()
-        #print(J_T)
         joint_angles = limb.joint_angles()
 
         #Get posd_t from haptic device
         hd_ori = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
         hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
-        #print(hd_x)
+
         #Baxter's orientation
         b_q = limb.endpoint_pose()['orientation']
         b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
         b_tranform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
 
-        #print(np.isclose(np.matmul(J_T.T,b_joint_vel),b_endpoint_vel))
         #Baxter's deisred position
         if not phantom.hd_button1:
             des_R = np.matmul(hd_ori,R_off)
             des_x = alpha*hd_x + x_off
-            #print(hd_x,des_x)
             log_x_des.append(des_x)
             log_hd.append(hd_x)
             log_x_b.append(b_x)
@@ -213,6 +207,7 @@ def main():
         rviz_pub.publish(pose)
 
         J_T = kin.jacobian(pos=[0,0,0]).T
+        des_joint_torques = caltorque(J_T,des_x,des_R,)
         delta_R = np.matmul(b_tranform.T,des_R)
         delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
         log_delta_theta.append(delta_theta)
