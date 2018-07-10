@@ -167,8 +167,8 @@ def main():
     hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
     b_ori_q = limb.endpoint_pose()['orientation']
     b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
-
     R_off = R_offset(hd_transform_0,b_transform_0)
+
     b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
     hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
     x_off = b_x - hd_x
@@ -187,20 +187,9 @@ def main():
             print("Button 1 Pressed")
             while phantom.hd_button1:
                 J_T = kin.jacobian(pos=[0,0,0]).T
-                b_q = limb.endpoint_pose()['orientation']
-                b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
-                b_tranform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
-                delta_R = np.matmul(b_tranform.T,hd_ori)
-                delta_theta = np.asarray(transfE.mat2euler(delta_R)).reshape((3,1))
-                delta_x = np.asarray(des_x-b_x).reshape((3,1))
-                delta_pos = np.concatenate((delta_x,delta_theta))
-
-                b_joint_vel = np.asarray([limb.joint_velocity(name) for name in limb.joint_names()])
-                b_end_vel = np.matmul(J_T.T,b_joint_vel)
-                delta_vel =  - b_end_vel.reshape((6,1))
-
-                des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)*10
-                des_joint_torques = np.matmul(J_T,des_force)
+                hd_l_vel = np.zeros((3,1))
+                hd_a_vel = np.zeros((3,1))
+                des_joint_torques = caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
 
                 tor_lim = np.asarray([50,50,50,50,15,15,15])*2
                 b_joint_vel = np.asarray([limb.joint_velocity(name) for name in limb.joint_names()])
@@ -210,11 +199,12 @@ def main():
                 limb.set_joint_torques(limb_torques)
 
             hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
-            hd_transform_0 = phantom.hd_transform[0:3,0:3]
-            b_ori_q = limb.endpoint_pose()['orientation']
-            b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
+            b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
             x_off = b_x - hd_x
-            R_off = R_offset(hd_transform_0,b_transform_0)
+            hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
+            b_ori_q = limb.endpoint_pose()['orientation']
+            b_transform = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
+            R_off = R_offset(hd_transform_0,b_transform)
 
         des_ori = mat2quat(des_R)
         pos = Point(des_x[0],des_x[1],des_x[2])
@@ -237,10 +227,6 @@ def main():
         des_joint_torques = des_joint_torques+grv_comp.gravity_torque/100
         #print("Total Torque: {}".format(des_joint_torques))
 
-        #des_joint_torques = np.zeros(7)#+grv_comp.gravity_torque/100
-        #print("Rotation Matrix {} \n Orientation {} joint torques {}".format(delta_R,delta_theta.T,des_joint_torques.T))
-        #print(grv_comp.gravity_torque)
-        #print(des_joint_torques.T)
         log_joint_torque.append(des_joint_torques)
         limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
         limb.set_joint_torques(limb_torques)
