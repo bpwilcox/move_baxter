@@ -130,27 +130,23 @@ def main():
 
         ori = mat2quat(hd_ori)
         cur_ori = limb.endpoint_pose()['orientation']
-        des_ori  = baxter_interface.Limb.Quaternion(w=ori[0],x=ori[1],y=ori[2],z=ori[3])
         #Get increment from haptic device
         alpha = 0.001
         delta_pos = alpha*np.matmul(baxter_transform,phantom.hd_vel)
         hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
         print(hd_x)
-        des_x = hd_x + x_off
         #print(delta_pos)
         #log_haptic.append([delta_pos[0],delta_pos[1],delta_pos[2]])
-        p_pos = Point(des_x[0],des_x[1],des_x[2])
-        p_pose= PoseStamped(header=hdr_p,pose=Pose(position= p_pos,orientation= des_ori))
-        rviz_pub.publish(p_pose)
 
         if not phantom.hd_button1:
+            des_x = hd_x + x_off
+            des_ori  = baxter_interface.Limb.Quaternion(w=ori[0],x=ori[1],y=ori[2],z=ori[3])
             #Baxter's new position
             #new_pos = Point(cur_pos.x+delta_pos[0],cur_pos.y+delta_pos[1],cur_pos.z+delta_pos[2])
-            new_pos = Point(des_x[0],des_x[1],des_x[2])
-            des_pos = new_pos
+            des_pos = Point(des_x[0],des_x[1],des_x[2])
             #IK pose
             #pose= PoseStamped(header=hdr,pose=Pose(position= new_pos,orientation=cur_ori))
-            pose= PoseStamped(header=hdr,pose=Pose(position= new_pos,orientation=des_ori))
+            pose= PoseStamped(header=hdr,pose=Pose(position= des_pos,orientation=des_ori))
             #seed_angle = JointState(header=hdr,name=limb.joint_names(),position=np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()]))
             ikreq.pose_stamp.append(pose)
             #ikreq.seed_angles.append(seed_angle)
@@ -177,16 +173,26 @@ def main():
             #x+=0.001
             #des_joint_angles = old_joint_angles+np.asarray([0,4*sin(2*3.14*x),0,0,0,0,0])
             #limb_joints = dict(zip(limb.joint_names(),des_joint_angles))
-
             limb.set_joint_positions(limb_joints,raw=True)
             ikreq.pose_stamp.pop()
-            #ikreq.seed_angles.pop()
+
         else:
+            while phantom.hd_button1:
+                pass
+
             #Reset R_offset
             hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
             b_ori_q = limb.endpoint_pose()['orientation']
             b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
             R_off = R_offset(hd_transform_0,b_transform_0)
+
+            b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
+            hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
+            x_off = b_x - hd_x
+
+        p_pos = Point(des_x[0],des_x[1],des_x[2])
+        p_pose= PoseStamped(header=hdr_p,pose=Pose(position= p_pos,orientation= des_ori))
+        rviz_pub.publish(p_pose)
         rate.sleep()
 
     limb.move_to_neutral()
