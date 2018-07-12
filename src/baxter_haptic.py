@@ -134,7 +134,7 @@ def main():
         #Get increment from haptic device
         alpha = 0.001
         delta_pos = alpha*np.matmul(baxter_transform,phantom.hd_vel)
-        hd_x = np.matmul(baxter_transform,phantom.hd_transform[0:3,3])
+        hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
         print(hd_x)
         des_x = hd_x + x_off
         #print(delta_pos)
