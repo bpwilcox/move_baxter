@@ -25,6 +25,13 @@ from baxter_core_msgs.srv import (
 )
 
 from sensor_msgs.msg import JointState
+from visualization_msgs.msg import Marker
+
+
+def scale_x(x):
+    scale_mat = np.diag([1.0/160,1.0/70,1.0/200])
+    #scale_mat = np.eye(3)
+    return np.matmul(scale_mat,x)
 
 from baxter_interface import CHECK_VERSION
 baxter_transform = np.asarray([
@@ -74,6 +81,10 @@ def main():
     rospy.init_node('Control_baxter')
     phantom = haptic_pos()
 
+    #Creating the Publisher for rviz visualization
+    rviz_pub = rospy.Publisher('hd_point',PoseStamped,queue_size=10)
+    hdr_p = Header(stamp=rospy.Time.now(), frame_id='/world')
+
     print("Getting robot state... ")
     rs = baxter_interface.RobotEnable(CHECK_VERSION)
     init_state = rs.state().enabled
@@ -94,7 +105,7 @@ def main():
     #Communication rate - 1kHz
     rate = rospy.Rate(50)
     def reset_baxter():
-        #np.save('log_joint_angles.npy',np.asarray(log_joint_angles))
+        np.save('log_joint_angles.npy',np.asarray(log_joint_angles))
         #np.save('log_pos.npy',np.asarray(log_pos))
         #np.save('log_haptic.npy',np.asarray(log_haptic))
         limb.move_to_neutral()
@@ -105,6 +116,10 @@ def main():
     b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
 
     R_off = R_offset(hd_transform_0,b_transform_0)
+
+    b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
+    hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
+    x_off = b_x - hd_x
 
     rospy.on_shutdown(reset_baxter)
 
@@ -119,11 +134,19 @@ def main():
         #Get increment from haptic device
         alpha = 0.001
         delta_pos = alpha*np.matmul(baxter_transform,phantom.hd_vel)
+        hd_x = np.matmul(baxter_transform,phantom.hd_transform[0:3,3])
+        print(hd_x)
+        des_x = hd_x + x_off
         #print(delta_pos)
         #log_haptic.append([delta_pos[0],delta_pos[1],delta_pos[2]])
+        p_pos = Point(des_x[0],des_x[1],des_x[2])
+        p_pose= PoseStamped(header=hdr_p,pose=Pose(position= p_pos,orientation= des_ori))
+        rviz_pub.publish(p_pose)
+
         if not phantom.hd_button1:
             #Baxter's new position
-            new_pos = Point(cur_pos.x+delta_pos[0],cur_pos.y+delta_pos[1],cur_pos.z+delta_pos[2])
+            #new_pos = Point(cur_pos.x+delta_pos[0],cur_pos.y+delta_pos[1],cur_pos.z+delta_pos[2])
+            new_pos = Point(des_x[0],des_x[1],des_x[2])
             des_pos = new_pos
             #IK pose
             #pose= PoseStamped(header=hdr,pose=Pose(position= new_pos,orientation=cur_ori))
@@ -143,20 +166,18 @@ def main():
                 new_pos = cur_pos
                 limb_joints = old_joint_angles
 
-            # Baxter joint control
-            #for j in limb.joint_names():
-            #    limb_joints[j] = limb_joints[j]*0.5 + old_joint_angles[j]*0.5
-
             #Log data
-            #log_joint_angles.append([limb_joints[j] for j in limb.joint_names()])
+
             #log_pos.append([new_pos.x,new_pos.y,new_pos.z])
 
             #Move Baxter Joint
+            #des_joint_angles =  np.asarray([np.sin(x)*.01,0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x)])+np.pi/4
             #des_joint_angles = np.asarray([old_joint_angles[j] for j in limb.joint_names()])+ [np.sin(x)*.01,0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x)]
-
-            x+=0.01
+            #log_joint_angles.append(des_joint_angles)
+            #x+=0.001
             #des_joint_angles = old_joint_angles+np.asarray([0,4*sin(2*3.14*x),0,0,0,0,0])
             #limb_joints = dict(zip(limb.joint_names(),des_joint_angles))
+
             limb.set_joint_positions(limb_joints,raw=True)
             ikreq.pose_stamp.pop()
             #ikreq.seed_angles.pop()
