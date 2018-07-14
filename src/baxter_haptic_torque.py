@@ -74,7 +74,7 @@ class gravity_compensation:
         self.gravity_torque = np.asarray(data_stream.gravity_model_effort[0:7])
 
 def scale_x(x):
-    scale_mat = np.diag([1.0/160,1.0/70,1.0/200])
+    scale_mat = np.diag([1.0/160,1.0/70,1.0/200])*0.5
     #scale_mat = np.eye(3)
     return np.matmul(scale_mat,x)
 
@@ -90,12 +90,14 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
     log_des_theta.append(np.asarray(transfE.mat2euler(des_R)).reshape((3,1)))
     #Gains of PD controller
     #K = np.diag([30,30,30,1,1,1])
-    K = np.diag([37]*3+[0]*3)
-    K_v = np.diag([1,1,1,0.5,0.5,0.5])*0
+    K = np.diag([80]*3+[5]*3)
+    #K_v = np.diag([1]*3+[0]*3)
+    K_v = np.sqrt(K)*2
     #Gains of null controller
-    K_null = np.diag([0,0,1,0,0,0,0])*5
+    K_null = np.diag([0,0,1,0,0,0,0])*10
     K_v_null = np.diag([0,0,1,0,0,0,0])
-    triangle = [0.1,0.4,0.9,0.4,0.1]
+    #triangle = np.asarray([0.1,0.2,0.5,0.2,0.1])
+    triangle = np.asarray([0.1,0.2,0.4,0.2,0.1])
     for i in range(5):
         #Baxter's orientation
         b_q = limb.endpoint_pose()['orientation']
@@ -122,6 +124,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
         des_joint_torques = np.matmul(J_T,des_force)
         print("Desired torque {}".format(des_joint_torques))
         log_joint_torques.append(des_joint_torques)
+
         #Null space torque
         des_joint_angles = np.asarray([0,0,0,0,0,0,0])
         b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
@@ -132,6 +135,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
         P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
         T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
         des_joint_torques = des_joint_torques#+T_null
+
 
         #clip the toruqes:
         tor_lim = np.asarray([50,50,0,50,15,15,15])*2
