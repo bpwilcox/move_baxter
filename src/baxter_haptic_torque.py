@@ -90,7 +90,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
     log_des_theta.append(np.asarray(transfE.mat2euler(des_R)).reshape((3,1)))
     #Gains of PD controller
     #K = np.diag([30,30,30,1,1,1])
-    K = np.diag([80]*3+[5]*3)
+    K = np.diag([60]*3+[10]*3)
     #K_v = np.diag([1]*3+[0]*3)
     K_v = np.sqrt(K)*2
     #Gains of null controller
@@ -183,7 +183,7 @@ def main():
     kin = baxter_kinematics('right')
 
     #Communication rate - 1kHz
-    rate = rospy.Rate(200)
+    rate = rospy.Rate(500)
 
     def reset_baxter():
         np.save('log_des_force.npy',np.asarray(log_des_force))
