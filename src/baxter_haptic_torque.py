@@ -84,27 +84,29 @@ log_delta_vel = []
 log_delta_pos = []
 log_des_x = []
 log_des_theta = []
+log_joint_angles = []
 
 def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
     log_des_x.append(des_x)
     log_des_theta.append(np.asarray(transfE.mat2euler(des_R)).reshape((3,1)))
     #Gains of PD controller
     #K = np.diag([30,30,30,1,1,1])
-    K = np.diag([60]*3+[10]*3)
+    K = np.diag([5]*3+[2]*3)
     #K_v = np.diag([1]*3+[0]*3)
     K_v = np.sqrt(K)*2
     #Gains of null controller
     K_null = np.diag([0,0,1,0,0,0,0])*10
     K_v_null = np.diag([0,0,1,0,0,0,0])
     #triangle = np.asarray([0.1,0.2,0.5,0.2,0.1])
-    triangle = np.asarray([0.1,0.2,0.4,0.2,0.1])
-    for i in range(5):
+    triangle = np.asarray([1])
+    for i in range(1):
         #Baxter's orientation
         b_q = limb.endpoint_pose()['orientation']
         b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
         b_tranform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
 
-        delta_R = np.matmul(des_R.T,b_tranform)
+        #delta_R = np.matmul(des_R.T,b_tranform)
+        delta_R = np.matmul(b_tranform.T,des_R)
         delta_theta = np.sin(np.asarray(transfE.mat2euler(delta_R)).reshape((3,1)))
         delta_x = np.asarray(des_x-b_x).reshape((3,1))
         delta_pos = np.concatenate((delta_x,delta_theta))
@@ -117,12 +119,12 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
         log_delta_vel.append(delta_vel)
 
         des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
-        #Ramp up and ramp down forces
+        # Ramp up and ramp down forces
         des_force = np.matmul(np.diag([triangle[i]]*6),des_force)
         #print("Desired force {}".format(des_force))
         log_des_force.append(des_force)
         des_joint_torques = np.matmul(J_T,des_force)
-        print("Desired torque {}".format(des_joint_torques))
+        # print("Desired torque {}".format(des_joint_torques))
         log_joint_torques.append(des_joint_torques)
 
         #Null space torque
@@ -192,6 +194,7 @@ def main():
         np.save('log_delta_vel.npy',np.asarray(log_delta_vel))
         np.save('log_des_x.npy',np.asarray(log_des_x))
         np.save('log_des_theta.npy',np.asarray(log_des_theta))
+        np.save('log_b_joint_angle_torque.npy',np.asarray(log_joint_angles))
         limb.move_to_neutral()
         rs.disable()
 
@@ -225,16 +228,6 @@ def main():
                 hd_l_vel = np.zeros((3,1))
                 hd_a_vel = np.zeros((3,1))
                 caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
-                '''
-                des_joint_torques = caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
-
-                tor_lim = np.asarray([50,50,50,50,15,15,15])*2
-                b_joint_vel = np.asarray([limb.joint_velocity(name) for name in limb.joint_names()])
-                des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
-                des_joint_torques = des_joint_torques#+grv_comp.gravity_torque/100
-                limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
-                limb.set_joint_torques(limb_torques)
-                '''
             hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
             b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
             x_off = b_x - hd_x
@@ -255,28 +248,9 @@ def main():
         hd_l_vel = np.matmul(baxter_transform,phantom.hd_vel)*0.001
         hd_a_vel = np.matmul(baxter_transform,phantom.hd_ang_vel)
         caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
-        '''
-        des_joint_torques = caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
-        #des_joint_torques = np.zeros((7,1))#+np.matmul(np.linalg.inv(kin.inertia()),grv_comp.gravity_torque)
-        #clip the toruqes:
-        tor_lim = np.asarray([50,50,0,50,15,15,15])*2
-        des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
 
-        #des_joint_torques = des_joint_torques+grv_comp.gravity_torque/100
-        #print(np.matmul(np.linalg.inv(kin.inertia()),grv_comp.gravity_torque))
-
-        #smooth_joint_torques = des_joint_torques *0.8 + old_joint_torques*0.2
-        smooth_joint_torques = des_joint_torques
-        old_joint_torques = des_joint_torques
-
-        #print("Total Torque: {}".format(des_joint_torques))
-
-        limb_torques = dict(zip(limb.joint_names(),smooth_joint_torques))
-        limb.set_joint_torques(limb_torques)
-        #print(limb_torques)
-        #rospy.spin()
-        '''
         b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
+        log_joint_angles.append(b_joint_angles)
         #print("Joint angles {}".format(b_joint_angles))
         joint_limit_test(b_joint_angles)
 
