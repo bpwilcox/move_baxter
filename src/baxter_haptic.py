@@ -1,6 +1,7 @@
 import rospy
 import baxter_interface
 import numpy as np
+import pickle
 
 from transforms3d.quaternions import (
     mat2quat,
@@ -32,9 +33,9 @@ from baxter_interface import CHECK_VERSION
 
 #Custom Modules
 from msg import haptic_pos,block_pos
-from utils import R_offset,joint_filter,scale_x
+from utils import R_offset,joint_filter,scale_x,joint_limit_test
 from gzb_interface import render_camera,load_gazebo_models,delete_camera,delete_gazebo_models
-
+from log_data import log_data_position
 baxter_transform = np.asarray([
                         [0, 0, 1],
                         [1, 0, 0],
@@ -45,11 +46,11 @@ delta_eps = 0.1
 
 
 def main():
-    log_joint_angles = []
-    # log_pos = []
-    # log_haptic = []
     rospy.init_node('Control_baxter')
 
+    #Logger Initialize
+    LogData = log_data_position()
+    #Initialize the haptic device
     phantom = haptic_pos()
 
     #Creating the Publisher for rviz visualization
@@ -69,11 +70,12 @@ def main():
     # neutral_ori = limb.endpoint_pose()['orientation']
 
     #Spawn tables
-    load_gazebo_models()
+    # load_gazebo_models()
 
     # Intialize the joint angle filter
     joint_angle = [limb.joint_angle(joint) for joint in limb.joint_names()]
-    # joint_angle_filter = joint_filter(joint_angle)
+    joint_angle_filter = joint_filter(joint_angle)
+    input_filter = joint_filter([0,0,0])
     # model_pos = block_pos()
     #Gripper initialization
     gripper_r = baxter_interface.Gripper('right')
@@ -88,13 +90,12 @@ def main():
     rate = rospy.Rate(100)
 
     def reset_baxter():
-        np.save('log_b_joint_angles_position.npy', np.asarray(log_joint_angles))
-        #np.save('log_pos.npy',np.asarray(log_pos))
-        #np.save('log_haptic.npy',np.asarray(log_haptic))
+        with open('position_control.pkl', 'wb') as output:
+            pickle.dump(LogData,output,pickle.HIGHEST_PROTOCOL)
         limb.move_to_neutral()
         rs.disable()
-        delete_camera()
-        delete_gazebo_models()
+        # delete_camera()
+        # delete_gazebo_models()
 
     # x = 0
     hd_transform_0 = np.matmul(
@@ -109,7 +110,7 @@ def main():
     x_off = b_x - hd_x
 
     rospy.on_shutdown(reset_baxter)
-    render_camera()
+    # render_camera()
 
     while not rospy.is_shutdown():
         # cur_joint_angles = limb.joint_angles()
@@ -136,11 +137,15 @@ def main():
         if not phantom.hd_button1:
             joint_angles = np.asarray(
                 [limb.joint_angle(joint) for joint in limb.joint_names()])
-            log_joint_angles.append(joint_angles)
             des_x = hd_x + x_off
+            # input_filter.add_joint_angle(des_x)
+            # des_x = input_filter.get_joint_angle()
+
             des_ori  = Quaternion(w=ori[0],x=ori[1],y=ori[2],z=ori[3])
 
-            #Fixed orientation
+            # Filter the input
+
+            # Fixed orientation
             # des_ori = neutral_ori
 
             p_pos = Point(des_x[0], des_x[1], des_x[2])
@@ -161,9 +166,10 @@ def main():
             if (resp.isValid[0]):
                 print("SUCCESS - Valid Joint Solution Found:")
                 # Format solution into Limb API-compatible dictionary
-                des_joint_angle = np.asarray(resp.joints[0].position)
-                #joint_angle_filter.add_joint_angle(resp.joints[0].position)
-                #des_joint_angle = joint_angle_filter.get_joint_angle()
+                #des_joint_angle = np.asarray(resp.joints[0].position)
+                joint_angle_filter.add_joint_angle(resp.joints[0].position)
+                des_joint_angle = joint_angle_filter.get_joint_angle()
+                joint_limit_test(des_joint_angle)
                 if np.sum(np.abs(des_joint_angle-joint_angles)) > delta_eps:
                     joint_angles = des_joint_angle#*0.5+joint_angles*0.5
                     #limb_joints = dict(zip(resp.joints[0].name, resp.joints[0].position))
@@ -173,10 +179,19 @@ def main():
                     #print limb_joints
             else:
                 print("INVALID POSE - No Valid Joint Solution Found.")
+                '''
+                hd_transform_0 = np.matmul(
+                    baxter_transform, phantom.hd_transform[0:3, 0:3])
+                b_ori_q = limb.endpoint_pose()['orientation']
+                b_transform_0 = quat2mat(
+                    [b_ori_q.w, b_ori_q.x, b_ori_q.y, b_ori_q.z])
+                R_off = R_offset(hd_transform_0, b_transform_0)
 
-            # Log data
-            # log_pos.append([new_pos.x,new_pos.y,new_pos.z])
-
+                b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
+                hd_x = scale_x(np.matmul(baxter_transform,
+                                         phantom.hd_transform[0:3, 3]))
+                x_off = b_x - hd_x
+                '''
             # Move Baxter Joint
             # des_joint_angles =  np.asarray([np.sin(x)*.01,0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x)])+np.pi/4
             # des_joint_angles = np.asarray([cur_joint_angles[j] for j in limb.joint_names()])+ [np.sin(x)*.01,0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x),0.01*np.sin(x)]
@@ -184,8 +199,8 @@ def main():
             # x+=0.001
             # des_joint_angles = cur_joint_angles+np.asarray([0,4*sin(2*3.14*x),0,0,0,0,0])
             # limb_joints = dict(zip(limb.joint_names(),des_joint_angles))
-
             # limb.set_joint_positions(limb_joints,raw=True)
+
             ikreq.pose_stamp.pop()
 
         else:
@@ -205,6 +220,15 @@ def main():
                                      phantom.hd_transform[0:3, 3]))
             x_off = b_x - hd_x
 
+        #Log information
+        b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
+        print(b_joint_angles)
+        #The first 3-points are x,y and co-ordinates and the last 4 are quaternions w,x,y and z
+        des_pose = np.asarray(list(des_x)+list(ori))
+        b_x = limb.endpoint_pose()['position']
+        b_q = limb.endpoint_pose()['orientation']
+        baxter_pose = np.asarray([b_x.x,b_x.y,b_x.z]+[b_q.w,b_q.x,b_q.y,b_q.z])
+        LogData.add_data(des_pose,baxter_pose,b_joint_angles)
         rate.sleep()
 
     limb.move_to_neutral()

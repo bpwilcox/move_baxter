@@ -1,8 +1,8 @@
-import time
 import rospy
 import baxter_interface
 from math import sin
 import numpy as np
+import pickle
 
 import transforms3d.euler as transfE
 
@@ -21,49 +21,25 @@ from geometry_msgs.msg import (
 )
 from std_msgs.msg import (
     Header,
-    String,
     Float32MultiArray
 )
 
 
 from baxter_core_msgs.msg import SEAJointState
-from visualization_msgs.msg import Marker
 
 from baxter_interface import CHECK_VERSION
 
-def R_offset(hd_transform_0,b_transform_0):
-    return np.matmul(hd_transform_0.T,b_transform_0)
+# Custom modules
+from utils import R_offset
+from msg import haptic_pos
+from log_data import log_data_forces
 
+LogData = log_data_forces()
 baxter_transform = np.asarray([
                         [0,0,1],
                         [1,0,0],
                         [0,1,0]
                         ])
-
-class haptic_pos:
-    def __init__(self):
-        self.hd_vel = np.zeros((3,1))
-        self.hd_ang_vel = np.zeros((3,1))
-        self.hd_transform = np.zeros((4,4))
-        self.hd_position = np.zeros((3,1))
-        self.hd_button1 = 0
-        self.hd_button2 = 0
-
-    def callback(self,data_stream):
-        self.hd_transform = np.reshape(data_stream.data[0:16],(4,4),order='F')
-        self.hd_vel = np.asarray(data_stream.data[16:19])
-        self.hd_ang_vel = np.asarray(data_stream.data[19:22])
-
-        #self.hd_position = np.asarray(data_stream.data[22:25])
-        if data_stream.data[22]==1:
-            self.hd_button1 = True
-        else:
-            self.hd_button1 = False
-        if data_stream.data[23]==1:
-            self.hd_button2 = True
-        else:
-            self.hd_button2 = False
-
 
 class gravity_compensation:
     def __init__(self):
@@ -74,81 +50,76 @@ class gravity_compensation:
         self.gravity_torque = np.asarray(data_stream.gravity_model_effort[0:7])
 
 def scale_x(x):
-    scale_mat = np.diag([1.0/160,1.0/70,1.0/200])*0.5
+    scale_mat = np.diag([1.0/160,1.0/70,1.0/200])
     #scale_mat = np.eye(3)
     return np.matmul(scale_mat,x)
 
-log_joint_torques = []
-log_des_force = []
-log_delta_vel = []
-log_delta_pos = []
-log_des_x = []
-log_des_theta = []
-log_joint_angles = []
 
 def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
-    log_des_x.append(des_x)
-    log_des_theta.append(np.asarray(transfE.mat2euler(des_R)).reshape((3,1)))
     #Gains of PD controller
-    #K = np.diag([30,30,30,1,1,1])
-    K = np.diag([5]*3+[2]*3)
-    #K_v = np.diag([1]*3+[0]*3)
-    K_v = np.sqrt(K)*2
+
+    #K = np.diag([9]*3+[0.08]*3)
+    K_1 = 9
+    K_2 = 5.5
+    K_p_f = np.diag([K_1]*3)
+    K_p_w = np.diag([K_2]*3)
+    K_v = np.diag([2*np.sqrt(K_1)]*3+[2*np.sqrt(K_2)]*3)
     #Gains of null controller
     K_null = np.diag([0,0,1,0,0,0,0])*10
     K_v_null = np.diag([0,0,1,0,0,0,0])
-    #triangle = np.asarray([0.1,0.2,0.5,0.2,0.1])
-    triangle = np.asarray([1])
-    for i in range(1):
-        #Baxter's orientation
-        b_q = limb.endpoint_pose()['orientation']
-        b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
-        b_tranform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
 
-        #delta_R = np.matmul(des_R.T,b_tranform)
-        delta_R = np.matmul(b_tranform.T,des_R)
-        delta_theta = np.sin(np.asarray(transfE.mat2euler(delta_R)).reshape((3,1)))
-        delta_x = np.asarray(des_x-b_x).reshape((3,1))
-        delta_pos = np.concatenate((delta_x,delta_theta))
-        log_delta_pos.append(delta_pos)
+    #Baxter's orientation
+    b_q = limb.endpoint_pose()['orientation']
+    b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
+    b_transform = quat2mat([b_q.w,b_q.x,b_q.y,b_q.z])
 
-        des_vel = np.concatenate((hd_l_vel,hd_a_vel))
-        b_joint_vel = np.asarray([limb.joint_velocity(name) for name in limb.joint_names()])
-        b_end_vel = np.matmul(J_T.T,b_joint_vel)
-        delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
-        log_delta_vel.append(delta_vel)
+    euler_seq = 'sxyz'
+    delta_R = np.matmul(b_transform.T,des_R)
+    delta_theta = np.sin(np.asarray(transfE.mat2euler(delta_R,euler_seq)).reshape((3,1)))
+    delta_x = np.asarray(des_x-b_x).reshape((3,1))
+    delta_pos = np.concatenate((delta_x,delta_theta))
 
-        des_force = np.matmul(K,delta_pos)+np.matmul(K_v,delta_vel)
-        # Ramp up and ramp down forces
-        des_force = np.matmul(np.diag([triangle[i]]*6),des_force)
-        #print("Desired force {}".format(des_force))
-        log_des_force.append(des_force)
-        des_joint_torques = np.matmul(J_T,des_force)
-        # print("Desired torque {}".format(des_joint_torques))
-        log_joint_torques.append(des_joint_torques)
+    des_vel = np.concatenate((hd_l_vel,hd_a_vel))
+    b_joint_vel = np.asarray([limb.joint_velocity(name) for name in limb.joint_names()])
+    b_end_vel = np.matmul(J_T.T,b_joint_vel)
+    delta_vel = des_vel.reshape((6,1)) - b_end_vel.reshape((6,1))
 
-        #Null space torque
-        des_joint_angles = np.asarray([0,0,0,0,0,0,0])
-        b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
-        des_joint_torque_null  = np.matmul(K_null,des_joint_angles-b_joint_angles) + np.matmul(K_v_null,-b_joint_vel)
+    des_force_p = np.concatenate((np.matmul(K_p_f,delta_x),np.matmul(b_transform,np.matmul(K_p_w,delta_theta))))
+    des_force = des_force_p+np.matmul(K_v,delta_vel)
+    #print("Desired force {}".format(des_force))
+    des_joint_torques = np.matmul(J_T,des_force)
+    # print("Desired torque {}".format(des_joint_torques))
 
-        #Finding the projection operator for the null torque opreration
-        J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
-        P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
-        T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
-        des_joint_torques = des_joint_torques#+T_null
+    #Null space torque
+    des_joint_angles = np.asarray([0,0,0,0,0,0,0])
+    b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
+    des_joint_torque_null  = np.matmul(K_null,des_joint_angles-b_joint_angles) + np.matmul(K_v_null,-b_joint_vel)
 
+    #Finding the projection operator for the null torque opreration
+    J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
+    P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
+    T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
+    des_joint_torques = des_joint_torques#+T_null
 
-        #clip the toruqes:
-        tor_lim = np.asarray([50,50,0,50,15,15,15])*2
-        des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
+    #clip the toruqes:
+    tor_lim = np.asarray([50,50,0,50,15,15,15])*2
+    des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
+    LogData.add_data_force(des_joint_torques,des_force,delta_pos,delta_vel)
+    haptic_q = transfE.mat2euler(des_R,euler_seq)
+    baxter_orient = limb.endpoint_pose()['orientation']
+    baxter_q = transfE.quat2euler([baxter_orient.w,baxter_orient.x,baxter_orient.y,baxter_orient.z],euler_seq)
+    baxter_x = limb.endpoint_pose()['position']
+    haptic_pose = list(des_x)+list(haptic_q)
+    baxter_pose = [baxter_x.x,baxter_x.y,baxter_x.z]+list(baxter_q)
+    baxter_joint_angles = [ limb.joint_angle(joint) for joint in limb.joint_names()]
+    LogData.add_data(haptic_pose,baxter_pose,baxter_joint_angles)
+    #des_joint_torques = np.zeros((7,))
+    limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
+    limb.set_joint_torques(limb_torques)
 
-        smooth_joint_torques = des_joint_torques
-
-        limb_torques = dict(zip(limb.joint_names(),smooth_joint_torques))
-        limb.set_joint_torques(limb_torques)
-    #return des_joint_torques#+T_null
-
+def set_joint_positions(limb,joint_positions):
+    joint_positions = dict(zip(limb.joint_names(),joint_positions))
+    limb.move_to_joint_positions(joint_positions)
 
 def joint_limit_test(b_joint_angles):
     #A function to test the joint limit of the system
@@ -178,7 +149,7 @@ def main():
 
     #Limb initialization
     limb = baxter_interface.Limb('right')
-    limb.set_command_timeout(1)
+    # limb.set_command_timeout(1)
     limb.move_to_neutral()
 
     #Initializing pyKDL for Jacobian
@@ -188,33 +159,27 @@ def main():
     rate = rospy.Rate(500)
 
     def reset_baxter():
-        np.save('log_des_force.npy',np.asarray(log_des_force))
-        np.save('log_joint_torques.npy',np.asarray(log_joint_torques))
-        np.save('log_delta_pos.npy',np.asarray(log_delta_pos))
-        np.save('log_delta_vel.npy',np.asarray(log_delta_vel))
-        np.save('log_des_x.npy',np.asarray(log_des_x))
-        np.save('log_des_theta.npy',np.asarray(log_des_theta))
-        np.save('log_b_joint_angle_torque.npy',np.asarray(log_joint_angles))
+        with open('torque_control.pkl', 'wb') as output:
+            pickle.dump(LogData,output,pickle.HIGHEST_PROTOCOL)
         limb.move_to_neutral()
         rs.disable()
 
     rospy.on_shutdown(reset_baxter)
 
-    hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
+    hd_transform_0 = phantom.hd_transform[0:3,0:3]
     b_ori_q = limb.endpoint_pose()['orientation']
     b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
-    R_off = R_offset(hd_transform_0,b_transform_0)
+    R_off = np.matmul(hd_transform_0.T, b_transform_0)
 
     b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
     hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
     x_off = b_x - hd_x
 
-    old_joint_torques = np.zeros((7,))
     while not rospy.is_shutdown():
         joint_angles = limb.joint_angles()
 
         #Get posd_t from haptic device
-        hd_ori = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
+        hd_ori = phantom.hd_transform[0:3,0:3]
         hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
 
         if not phantom.hd_button1:
@@ -224,36 +189,50 @@ def main():
         else:
             print("Button 1 Pressed")
             while phantom.hd_button1:
-                J_T = kin.jacobian(pos=[0,0,0]).T
+                J_T = kin.jacobian().T
                 hd_l_vel = np.zeros((3,1))
                 hd_a_vel = np.zeros((3,1))
                 caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
             hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
             b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
             x_off = b_x - hd_x
-            hd_transform_0 = np.matmul(baxter_transform,phantom.hd_transform[0:3,0:3])
+            hd_transform_0 = phantom.hd_transform[0:3,0:3]
             b_ori_q = limb.endpoint_pose()['orientation']
             b_transform = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
             R_off = R_offset(hd_transform_0,b_transform)
 
+        const = 1/np.sqrt(2)
+        R1 = np.asarray([[1,0,0],
+                         [0,const,const],
+                         [0,-const,const]])
+        R2 = np.asarray([[const,0,-const],
+                         [0,1,0],
+                         [const,0,const]])
+        R3 = np.asarray([[const,const,0],
+                         [-const,const,0],
+                         [0,0,1]])
+        des_R = np.matmul(R1, b_transform_0)
+        des_x = np.asarray([0.7,-0.3,0.2])
         des_ori = mat2quat(des_R)
         pos = Point(des_x[0],des_x[1],des_x[2])
         ori = Quaternion(w = des_ori[0], x = des_ori[1], y = des_ori[2], z = des_ori[3])
         pose= PoseStamped(header=hdr,pose=Pose(position= pos,orientation= ori))
         rviz_pub.publish(pose)
 
-        J_T = kin.jacobian(pos=[0,0,0]).T
+        J_T = kin.jacobian().T
 
         #Getting the haptic velocity
         hd_l_vel = np.matmul(baxter_transform,phantom.hd_vel)*0.001
         hd_a_vel = np.matmul(baxter_transform,phantom.hd_ang_vel)
+
+        hd_l_vel = np.asarray([0,0,0])
+        hd_a_vel = np.asarray([0,0,0])
+
         caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T)
 
         b_joint_angles = np.asarray([limb.joint_angle(joint) for joint in limb.joint_names()])
-        log_joint_angles.append(b_joint_angles)
         #print("Joint angles {}".format(b_joint_angles))
         joint_limit_test(b_joint_angles)
-
         rate.sleep()
     print()
     limb.move_to_neutral()
