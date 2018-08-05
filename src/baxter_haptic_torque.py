@@ -5,6 +5,7 @@ import numpy as np
 import pickle
 
 import transforms3d.euler as transfE
+from gzb_interface import load_gazebo_models,delete_gazebo_models
 
 from transforms3d.quaternions import (
     mat2quat,
@@ -59,11 +60,11 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
     #Gains of PD controller
 
     #K = np.diag([9]*3+[0.08]*3)
-    K_1 = 9
-    K_2 = 5.5
+    K_1 = 100
+    K_2 = 8
     K_p_f = np.diag([K_1]*3)
     K_p_w = np.diag([K_2]*3)
-    K_v = np.diag([2*np.sqrt(K_1)]*3+[2*np.sqrt(K_2)]*3)
+    K_v = np.diag([32]*3+[2*np.sqrt(K_2)]*3)
     #Gains of null controller
     K_null = np.diag([0,0,1,0,0,0,0])*10
     K_v_null = np.diag([0,0,1,0,0,0,0])
@@ -102,7 +103,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T):
     des_joint_torques = des_joint_torques#+T_null
 
     #clip the toruqes:
-    tor_lim = np.asarray([50,50,0,50,15,15,15])*2
+    tor_lim = np.asarray([50,50,50,50,15,15,15])*2
     des_joint_torques = np.diag(np.clip(des_joint_torques,-tor_lim,tor_lim)).reshape((7,))
     LogData.add_data_force(des_joint_torques,des_force,delta_pos,delta_vel)
     haptic_q = transfE.mat2euler(des_R,euler_seq)
@@ -161,11 +162,12 @@ def main():
     def reset_baxter():
         with open('torque_control.pkl', 'wb') as output:
             pickle.dump(LogData,output,pickle.HIGHEST_PROTOCOL)
+        #delete_gazebo_models()
         limb.move_to_neutral()
         rs.disable()
 
     rospy.on_shutdown(reset_baxter)
-
+    # load_gazebo_models()
     hd_transform_0 = phantom.hd_transform[0:3,0:3]
     b_ori_q = limb.endpoint_pose()['orientation']
     b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
@@ -196,10 +198,10 @@ def main():
             hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
             b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
             x_off = b_x - hd_x
-            hd_transform_0 = phantom.hd_transform[0:3,0:3]
+            hd_transform = phantom.hd_transform[0:3,0:3]
             b_ori_q = limb.endpoint_pose()['orientation']
             b_transform = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
-            R_off = R_offset(hd_transform_0,b_transform)
+            R_off =np.matmul(hd_transform.T,b_transform)
 
         const = 1/np.sqrt(2)
         R1 = np.asarray([[1,0,0],
@@ -211,8 +213,8 @@ def main():
         R3 = np.asarray([[const,const,0],
                          [-const,const,0],
                          [0,0,1]])
-        des_R = np.matmul(R1, b_transform_0)
-        des_x = np.asarray([0.7,-0.3,0.2])
+        des_R = np.matmul(R3, b_transform_0)
+        des_x = np.asarray([0.6,-0.7,0.2])
         des_ori = mat2quat(des_R)
         pos = Point(des_x[0],des_x[1],des_x[2])
         ori = Quaternion(w = des_ori[0], x = des_ori[1], y = des_ori[2], z = des_ori[3])
