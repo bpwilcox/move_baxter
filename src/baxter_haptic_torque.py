@@ -213,8 +213,8 @@ def main():
         R3 = np.asarray([[const,const,0],
                          [-const,const,0],
                          [0,0,1]])
-        des_R = np.matmul(R3, b_transform_0)
-        des_x = np.asarray([0.6,-0.7,0.2])
+        #des_R = np.matmul(R3, b_transform_0)
+        #des_x = np.asarray([0.6,-0.7,0.2])
         des_ori = mat2quat(des_R)
         pos = Point(des_x[0],des_x[1],des_x[2])
         ori = Quaternion(w = des_ori[0], x = des_ori[1], y = des_ori[2], z = des_ori[3])
