@@ -1,3 +1,4 @@
+
 '''
 This module contains all the class definition for communication with the Haptic
 device and ROS
