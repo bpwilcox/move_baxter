@@ -5,7 +5,7 @@ import numpy as np
 import pickle
 
 import transforms3d.euler as transfE
-from gzb_interface import load_gazebo_models,delete_gazebo_models
+from gzb_interface import load_gazebo_models,delete_gazebo_models,load_marker,delete_marker
 
 from transforms3d.quaternions import (
     mat2quat,
@@ -57,13 +57,18 @@ def scale_x(x):
     #scale_mat = np.eye(3)
     return np.matmul(scale_mat,x)
 
+def set_goal():
+    y = np.random.uniform(-0.9,-0.7,1)
+    x = np.random.uniform(0.1,0.35,1)
+    z = 0.9
+    return np.squeeze([x,y,z])
 
 def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T,grav_comp):
     #Gains of PD controller
 
     #K = np.diag([9]*3+[0.08]*3)
-    # Gains for Simulator
 
+    # Gains for Simulator
     K_1 = 100
     K_2 = 8
     K_p_f = np.diag([K_1]*3)
@@ -117,7 +122,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T,grav_comp):
     J_T_pinv = np.matmul(np.linalg.inv(np.matmul(J_T.T,J_T)),J_T.T)
     P_null = np.eye(7) - np.matmul(J_T,J_T_pinv)
     T_null = np.asarray(np.matmul(P_null,des_joint_torque_null)).reshape((7,))
-    des_joint_torques = des_joint_torques + grav_comp.gravity_torque+T_null
+    des_joint_torques = des_joint_torques + grav_comp.gravity_torque*0.2+T_null
 
     #clip the torques:
     tor_lim = np.asarray([50,50,50,50,15,15,15])*2
@@ -134,7 +139,7 @@ def caltorque(des_x,des_R,hd_l_vel,hd_a_vel,limb,x_off,R_off,J_T,grav_comp):
     # des_joint_torques = np.zeros((7,))
     limb_torques = dict(zip(limb.joint_names(),des_joint_torques))
     limb.set_joint_torques(limb_torques)
-    print(limb_torques)
+    # print(limb_torques)
 
 def set_joint_positions(limb,joint_positions):
     joint_positions = dict(zip(limb.joint_names(),joint_positions))
@@ -181,18 +186,24 @@ def main():
     # Initialize publisher for zero torques
     pub_gravity = rospy.Publisher('/robot/limb/right/suppress_gravity_compensation',Empty,queue_size=1)
     grv_comp = gravity_compensation()
+    
 
     def reset_baxter():
         limb.exit_control_mode()
 
         with open('torque_control.pkl', 'wb') as output:
             pickle.dump(LogData,output,pickle.HIGHEST_PROTOCOL)
+        delete_marker()
         delete_gazebo_models()
         limb.move_to_neutral()
         rs.disable()
 
     rospy.on_shutdown(reset_baxter)
     load_gazebo_models()
+
+    # Get the goal and add the marker
+    goal =set_goal()
+    load_marker(goal)
     hd_transform_0 = phantom.hd_transform[0:3,0:3]
     b_ori_q = limb.endpoint_pose()['orientation']
     b_transform_0 = quat2mat([b_ori_q.w,b_ori_q.x,b_ori_q.y,b_ori_q.z])
@@ -224,6 +235,7 @@ def main():
                 pub_gravity.publish()
             hd_x = scale_x(np.matmul(baxter_transform,phantom.hd_transform[0:3,3]))
             b_x = np.asarray([x_i for x_i in limb.endpoint_pose()['position']])
+            print(b_x)
             x_off = b_x - hd_x
             hd_transform = phantom.hd_transform[0:3,0:3]
             b_ori_q = limb.endpoint_pose()['orientation']

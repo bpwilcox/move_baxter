@@ -53,27 +53,27 @@ def delete_camera():
 def load_gazebo_models(table_pose=Pose(position=Point(x=0.75, y=-.504, z=0)),
                        table_reference_frame="world",
                        block_pose=Pose(position=Point(
-                           x=0.6725, y=-0.25, z=0.91)),
+                           x=0.6725, y=-0.25, z=0.94)),
                        block_reference_frame="world"):
     '''
     This function loads the table and block to the Gazebo environment
     '''
     # Get Models' Path
     model_path = rospkg.RosPack().get_path('baxter_sim_examples')+"/models/"
-    # Load Table SDF
-    table_xml = ''
-    with open(model_path + "cafe_table/model.sdf", "r") as table_file:
-        table_xml = table_file.read().replace('\n', '')
     # Load Block URDF
     block_xml = ''
     with open(model_path + "block/model.urdf", "r") as block_file:
         block_xml = block_file.read().replace('\n', '')
+    # Load Puck SDF
+    puck_xml=''
+    with open("/home/arclab/model_editor_models/HeavyPuck/model.sdf", "r") as puck_file:
+        puck_xml = puck_file.read().replace('\n', '')
     #Load Maze Table SDF
     maze_table_xml = ''
     with open("/home/arclab/model_editor_models/L_table_0_0/model.sdf", "r") as maze_table_file:
         maze_table_xml = maze_table_file.read().replace('\n', '')
 
-    # Spawn Table SDF
+    # Spawn L-shaped Table SDF
     rospy.wait_for_service('/gazebo/spawn_sdf_model')
     try:
         spawn_sdf = rospy.ServiceProxy('/gazebo/spawn_sdf_model', SpawnModel)
@@ -81,6 +81,14 @@ def load_gazebo_models(table_pose=Pose(position=Point(x=0.75, y=-.504, z=0)),
                              table_pose, table_reference_frame)
     except rospy.ServiceException, e:
         rospy.logerr("Spawn SDF service call failed: {0}".format(e))
+    # Spawn Puck SDF
+    rospy.wait_for_service('/gazebo/spawn_sdf_model')
+    try:
+        spawn_sdf = rospy.ServiceProxy('/gazebo/spawn_sdf_model', SpawnModel)
+        resp_sdf = spawn_sdf("HeavyPuck", puck_xml, "/",block_pose,block_reference_frame)
+    except rospy.ServiceException, e:
+        rospy.logerr("Spawn SDF service call failed: {0}".format(e))
+    """
     # Spawn Block URDF
     rospy.wait_for_service('/gazebo/spawn_urdf_model')
     try:
@@ -89,7 +97,7 @@ def load_gazebo_models(table_pose=Pose(position=Point(x=0.75, y=-.504, z=0)),
                                block_pose, block_reference_frame)
     except rospy.ServiceException, e:
         rospy.logerr("Spawn URDF service call failed: {0}".format(e))
-
+    """
 
 def delete_gazebo_models():
     # This will be called on ROS Exit, deleting Gazebo models
@@ -99,6 +107,31 @@ def delete_gazebo_models():
     try:
         delete_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
         resp_delete = delete_model("L_table_0_0")
-        resp_delete = delete_model("block")
+        # resp_delete = delete_model("block")
+        resp_delete = delete_model("HeavyPuck")
     except rospy.ServiceException, e:
         rospy.loginfo("Delete Model service call failed: {0}".format(e))
+
+def load_marker(goal):
+    ref_frame = "ground_plane"
+    block_pose = Pose(position=Point(
+        x= goal[0],
+        y= goal[1],
+        z= goal[2]
+    ))
+    model_path ="/home/arclab/model_editor_models/"
+    marker_xml = ''
+    with open(model_path+"unit_box_0/model.sdf") as marker_file:
+        marker_xml = marker_file.read().replace('\n','')
+
+    # Load the marker
+    rospy.wait_for_service('/gazebo/spawn_sdf_model')
+    try:
+        spawn_sdf = rospy.ServiceProxy('/gazebo/spawn_sdf_model', SpawnModel)
+        resp_sdf = spawn_sdf("unit_box_0", marker_xml, "/",block_pose,ref_frame)
+    except rospy.ServiceException as e:
+        rospy.logerr("Spawn URDF service call failed: {0}".format(e))
+
+def delete_marker():
+    delete_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
+    resp_delete = delete_model("unit_box_0")
